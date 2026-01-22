@@ -1,35 +1,67 @@
-# ADR 001: Penggunaan PostgreSQL sebagai Data Warehouse
+# 📐 Arsitektur Pipeline: Monitoring Sensor Pipa Minyak
 
-## Status
-DITERIMA
+## 🎯 Tujuan Bisnis
+Membangun sistem monitoring real-time untuk sensor pipa minyak dengan kemampuan:
+1. **Deteksi anomaly** suhu dan tekanan secara otomatis
+2. **Pelaporan real-time** untuk tim operasional
+3. **Historical analysis** untuk preventive maintenance
+4. **Alerting sistem** ketika threshold terlewati
 
-## Konteks
-Kita perlu memilih storage layer untuk data sensor pipeline. Pilihan:
-1. **PostgreSQL**: RDBMS tradisional, on-prem/cloud
-2. **Snowflake**: Cloud data warehouse, consumption-based pricing
-3. **BigQuery**: Serverless, integration dengan GCP
+## 🏗️ Arsitektur Teknis
 
-## Keputusan
-Kita akan menggunakan **PostgreSQL** karena:
+### Komponen Utama
+Data Sources → Redis Stream → Airflow → PostgreSQL → dbt → Grafana
+↑ ↓ ↓ ↓
+Simulator Bronze Silver/Gold Dashboard
 
-### Pro
-1. **Cost**: $0 untuk development (local), murah untuk production
-2. **Simplicity**: Tim sudah familiar dengan SQL
-3. **JSON Support**: Bisa simpan raw sensor data sebagai JSONB
-4. **CTEs & Window Functions**: Critical untuk anomaly detection logic
-5. **Transactional**: ACID compliance untuk data integrity
 
-### Kontra
-1. **Scalability**: Vertical scaling vs horizontal (Snowflake)
-2. **Performance**: Untuk query besar, mungkin lebih lambat
-3. **Management**: Self-managed vs serverless
+### Pilihan Teknologi & Justifikasi
 
-### Konsekuensi
-1. Perlu manage replication & backup manual
-2. Partitioning diperlukan untuk data besar
-3. Monitoring performance lebih hands-on
+#### 1. **Redis sebagai Streaming Layer**
+- **Kenapa?**: Data sensor masuk dengan volume tinggi (10k events/detik)
+- **Keuntungan**: Low-latency, pub/sub pattern, persistence opsional
+- **Alternatif yang dipertimbangkan**: Kafka (lebih kompleks), RabbitMQ (kurang scalable)
 
-## Metadata
-- **Tanggal**: 2026-01-23
-- **Deciders**: Lead Data Engineer, CTO
-- **Consulted**: Data Analyst Team, DevOps
+#### 2. **PostgreSQL sebagai Data Warehouse**
+- **Kenapa?**: 
+  - Data relasional (sensor → pipeline → anomaly)
+  - Support JSON untuk data raw
+  - Familiaritas tim
+  - CTEs & window functions untuk anomaly detection
+- **Trade-off**: Bukan data lake, tapi cocok untuk volume data ini
+
+#### 3. **dbt untuk Transformasi**
+- **Kenapa?**: 
+  - Version-controlled SQL
+  - Testing built-in
+  - Documentation generation
+  - Modular transformations
+- **Critical path**: Bronze → Silver → Gold
+
+#### 4. **Airflow untuk Orkestrasi**
+- **Kenapa?**:
+  - Schedule pipeline setiap 5 menit
+  - Retry logic untuk transient failures
+  - Monitoring task-level
+  - Community besar
+
+#### 5. **Grafana untuk Visualization**
+- **Kenapa?**:
+  - Real-time dashboards
+  - Alert integration
+  - Team familiarity
+
+### Data Flow
+1. **Bronze Layer**: Raw data, append-only, schema validation
+2. **Silver Layer**: Cleaned, validated, business entities
+3. **Gold Layer**: Business-ready, star schema, anomaly flags
+
+### Anomaly Detection Logic
+- **Suhu**: > 100°C atau < 50°C = ANOMALY
+- **Pressure**: > 150 psi atau < 80 psi = ANOMALY
+- **Rate of Change**: Δ > 10°C/menit = ANOMALY
+
+### Risk Mitigation
+1. **Data Loss**: Redis persistence + WAL PostgreSQL
+2. **Pipeline Failure**: Airflow retry + dead letter queue
+3. **Quality**: dbt tests + data contracts
